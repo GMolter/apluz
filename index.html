@@ -4,8 +4,9 @@
   <meta charset="utf-8" />
   <title>Chat with my Agent</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- Load the ChatKit web component -->
-  <script type="module" src="https://unpkg.com/@openai/chatkit/dist/web.js"></script>
+  <!-- Use jsDelivr to avoid the unpkg CORS hiccup -->
+  <script type="module" crossorigin="anonymous"
+          src="https://cdn.jsdelivr.net/npm/@openai/chatkit/dist/web.js"></script>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
     #mount { margin-top: 16px; }
@@ -17,15 +18,14 @@
 
   <script>
     async function start() {
-      // Call your own Vercel API route (same domain)
       const r = await fetch("/api/session", { method: "POST" });
       if (!r.ok) throw new Error(await r.text());
       const { client_secret } = await r.json();
 
       const el = document.createElement("openai-chatkit");
       el.setAttribute("style", "width:420px;height:640px;");
-      // optional theme: el.setAttribute("theme", "light");
-      el.clientSecret = client_secret; // authenticate the widget
+      // el.setAttribute("theme", "light"); // optional
+      el.clientSecret = client_secret;
       document.getElementById("mount").appendChild(el);
     }
 
