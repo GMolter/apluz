@@ -2,93 +2,36 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Quick Chat → Agent Workflow</title>
+  <title>Chat with my Agent</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <!-- Load the ChatKit web component -->
   <script type="module" src="https://unpkg.com/@openai/chatkit/dist/web.js"></script>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
-    .row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
-    input { padding:10px; border:1px solid #ccc; border-radius:8px; min-width:280px; }
-    button { padding:10px 14px; border-radius:8px; border:0; cursor:pointer; }
-    #mount { margin-top:16px; }
-    .note { color:#666; font-size:12px; margin-top:6px; }
+    #mount { margin-top: 16px; }
   </style>
 </head>
 <body>
   <h1>Chat with my Agent</h1>
-
-  <div class="row">
-    <input id="apiKey" type="password" placeholder="OpenAI API key (sk-...)" />
-    <input id="workflowId" type="text" placeholder="Workflow ID (wf_...)" />
-    <button id="start">Start chat</button>
-  </div>
-  <div class="note">
-    ⚠️ Demo only. This runs entirely in your browser and sends your API key to OpenAI directly.
-    For production, create the session on your server and pass a short-lived client secret to the browser.
-  </div>
-
   <div id="mount"></div>
 
   <script>
-    const startBtn = document.getElementById("start");
-    const mount = document.getElementById("mount");
+    async function start() {
+      // Call your own Vercel API route (same domain)
+      const r = await fetch("/api/session", { method: "POST" });
+      if (!r.ok) throw new Error(await r.text());
+      const { client_secret } = await r.json();
 
-    async function createSession({ apiKey, workflowId }) {
-      const r = await fetch("https://api.openai.com/v1/chatkit/sessions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${apiKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          workflow_id: workflowId
-          // optional: you can add { user: { id: "anon-user" } } here
-        })
-      });
-      if (!r.ok) {
-        const errText = await r.text();
-        throw new Error(`Failed to create session: ${errText}`);
-      }
-      return r.json(); // { client_secret, ... }
+      const el = document.createElement("openai-chatkit");
+      el.setAttribute("style", "width:420px;height:640px;");
+      // optional theme: el.setAttribute("theme", "light");
+      el.clientSecret = client_secret; // authenticate the widget
+      document.getElementById("mount").appendChild(el);
     }
 
-    startBtn.addEventListener("click", async () => {
-      const apiKey = document.getElementById("apiKey").value.trim();
-      const workflowId = document.getElementById("workflowId").value.trim();
-      if (!apiKey || !workflowId) {
-        alert("Please enter both your API key and workflow ID.");
-        return;
-      }
-
-      startBtn.disabled = true;
-      startBtn.textContent = "Starting…";
-
-      try {
-        const session = await createSession({ apiKey, workflowId });
-
-        // remove previous chat if any
-        mount.innerHTML = "";
-
-        // Create and attach the ChatKit element
-        const chat = document.createElement("openai-chatkit");
-        // set size; you can also do full-page: width:100%;height:70vh
-        chat.setAttribute("style", "width: 420px; height: 640px;");
-        // optional theme
-        chat.setAttribute("theme", "light");
-
-        // Pass the client secret to the component (authenticates the widget)
-        chat.clientSecret = session.client_secret;
-
-        mount.appendChild(chat);
-        startBtn.textContent = "Chat is ready";
-      } catch (e) {
-        console.error(e);
-        alert(e.message);
-        startBtn.textContent = "Start chat";
-      } finally {
-        startBtn.disabled = false;
-      }
+    start().catch(err => {
+      console.error(err);
+      alert("Failed to start chat: " + (err?.message || err));
     });
   </script>
 </body>
