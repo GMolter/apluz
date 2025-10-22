@@ -1,69 +1,88 @@
 // /api/session.js
-// Env vars: OPENAI_API_KEY, WORKFLOW_ID
-// Tip: add your production & preview domains in OpenAI's domain allowlist for ChatKit.
+export const config = { runtime: "edge" };
 
-const allowOrigin = (req) =>
-  req.headers.origin &&
-  /^(https:\/\/(?:.+\.)?apluz\.vercel\.app|http:\/\/localhost:\d+)$/.test(req.headers.origin)
-    ? req.headers.origin
-    : "https://apluz.vercel.app";
+const BASE = "https://api.openai.com/v1";
 
-const CORS = (origin) => ({
-  "Access-Control-Allow-Origin": origin,
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  "Access-Control-Max-Age": "86400",
-});
-
-export default async function handler(req, res) {
-  const origin = allowOrigin(req);
-  const setCORS = () => {
-    const h = CORS(origin);
-    for (const [k, v] of Object.entries(h)) res.setHeader(k, v);
-  };
-
-  if (req.method === "OPTIONS") {
-    setCORS();
-    return res.status(204).end();
+async function openai(path, init = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+      ...(init.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const err = await res.text().catch(() => "");
+    throw new Error(`OpenAI ${res.status}: ${err}`);
   }
+  return res.json();
+}
 
+export default async function handler(req) {
   if (req.method !== "POST") {
-    setCORS();
-    return res.status(405).json({ error: "Method Not Allowed" });
+    return new Response("Method Not Allowed", { status: 405 });
   }
 
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
-    const workflowId = process.env.WORKFLOW_ID;
-    if (!apiKey || !workflowId) throw new Error("Missing OPENAI_API_KEY or WORKFLOW_ID");
+    const { message, threadId } = await req.json();
+    if (!process.env.OPENAI_API_KEY) throw new Error("Missing OPENAI_API_KEY");
+    if (!process.env.ASSISTANT_ID) throw new Error("Missing ASSISTANT_ID");
 
-    // Create ChatKit session — IMPORTANT: include OpenAI-Beta header
-    const r = await fetch("https://api.openai.com/v1/chatkit/sessions", {
+    // 1) Create / reuse thread
+    let currentThreadId = threadId;
+    if (!currentThreadId) {
+      const thread = await openai("/threads", { method: "POST" });
+      currentThreadId = thread.id;
+    }
+
+    // 2) Add user message
+    await openai(`/threads/${currentThreadId}/messages`, {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "OpenAI-Beta": "chatkit_beta=v1",
-      },
-      body: JSON.stringify({
-        workflow_id: workflowId,
-        // optional: user identity you want inside the workflow
-        // user: { id: "anon-user" }
-      }),
+      body: JSON.stringify({ role: "user", content: message }),
     });
 
-    const text = await r.text();
-    if (!r.ok) {
-      console.error("OpenAI session error:", text);
-      throw new Error(text);
-    }
-    const data = JSON.parse(text); // { client_secret, ... }
+    // 3) Run assistant
+    const run = await openai(`/threads/${currentThreadId}/runs`, {
+      method: "POST",
+      body: JSON.stringify({ assistant_id: process.env.ASSISTANT_ID }),
+    });
 
-    setCORS();
-    return res.status(200).json({ client_secret: data.client_secret });
-  } catch (err) {
-    console.error(err);
-    setCORS();
-    return res.status(500).json({ error: String(err.message || err) });
+    // 4) Poll until done (simple loop; no tool-calls handled here)
+    let status = run.status;
+    let safetyStop = 0;
+    while ((status === "queued" || status === "in_progress") && safetyStop < 60) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const check = await openai(`/threads/${currentThreadId}/runs/${run.id}`);
+      status = check.status;
+      safetyStop++;
+    }
+
+    if (status !== "completed") {
+      return new Response(
+        JSON.stringify({
+          error: `Run status: ${status} (not completed)`,
+          threadId: currentThreadId,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // 5) Read the latest assistant message
+    const messages = await openai(`/threads/${currentThreadId}/messages`);
+    const lastAssistant = messages.data.find((m) => m.role === "assistant");
+    const text =
+      lastAssistant?.content?.[0]?.text?.value ??
+      "(No response from assistant)";
+
+    return new Response(
+      JSON.stringify({ reply: text, threadId: currentThreadId }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  } catch (e) {
+    return new Response(
+      JSON.stringify({ error: e.message || String(e) }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
   }
 }
