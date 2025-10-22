@@ -1,37 +1,81 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Chat with my Agent</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- Use jsDelivr to avoid the unpkg CORS hiccup -->
-  <script type="module" crossorigin="anonymous"
-          src="https://cdn.jsdelivr.net/npm/@openai/chatkit/dist/web.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Assistant Tester</title>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
-    #mount { margin-top: 16px; }
+    body { margin:0; font-family: system-ui, sans-serif; background:#f6f7fb; height:100vh; display:flex; flex-direction:column; }
+    #chat { flex:1; overflow:auto; padding:20px; display:flex; flex-direction:column; gap:10px; }
+    .msg { max-width:80%; padding:10px 14px; border-radius:10px; line-height:1.4; }
+    .user { align-self:flex-end; background:#2563eb; color:#fff; }
+    .assistant { align-self:flex-start; background:#fff; border:1px solid #e5e7eb; color:#111; }
+    form { display:flex; gap:8px; padding:10px; background:#fff; border-top:1px solid #e5e7eb; }
+    input { flex:1; padding:12px 14px; font-size:16px; border:1px solid #e5e7eb; border-radius:8px; outline:none; }
+    button { padding:12px 16px; border:none; border-radius:8px; background:#2563eb; color:#fff; font-size:16px; cursor:pointer; }
+    .typing { font-style:italic; color:#6b7280; }
   </style>
 </head>
 <body>
-  <h1>Chat with my Agent</h1>
-  <div id="mount"></div>
+  <div id="chat"></div>
+  <form id="form">
+    <input id="input" placeholder="Type your message…" autocomplete="off" required />
+    <button>Send</button>
+  </form>
 
   <script>
-    async function start() {
-      const r = await fetch("/api/session", { method: "POST" });
-      if (!r.ok) throw new Error(await r.text());
-      const { client_secret } = await r.json();
+    const chat = document.getElementById("chat");
+    const form = document.getElementById("form");
+    const input = document.getElementById("input");
 
-      const el = document.createElement("openai-chatkit");
-      el.setAttribute("style", "width:420px;height:640px;");
-      // el.setAttribute("theme", "light"); // optional
-      el.clientSecret = client_secret;
-      document.getElementById("mount").appendChild(el);
+    let threadId = null;
+
+    function add(role, text, opts = {}) {
+      const div = document.createElement("div");
+      div.className = `msg ${role}`;
+      div.textContent = text;
+      if (opts.id) div.id = opts.id;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+      return div;
     }
 
-    start().catch(err => {
-      console.error(err);
-      alert("Failed to start chat: " + (err?.message || err));
+    function update(el, text) {
+      el.textContent = text;
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const message = input.value.trim();
+      if (!message) return;
+
+      input.value = "";
+      add("user", message);
+
+      const typingId = `t-${Date.now()}`;
+      const typingEl = add("assistant", "Assistant is thinking…", { id: typingId });
+      typingEl.classList.add("typing");
+
+      try {
+        const res = await fetch("/api/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, threadId }),
+        });
+        const data = await res.json();
+        if (data.error) {
+          update(typingEl, `⚠️ ${data.error}`);
+          typingEl.classList.remove("typing");
+          return;
+        }
+        threadId = data.threadId;
+        update(typingEl, data.reply);
+        typingEl.classList.remove("typing");
+      } catch (err) {
+        update(typingEl, "Network error. Check logs.");
+        typingEl.classList.remove("typing");
+      }
     });
   </script>
 </body>
